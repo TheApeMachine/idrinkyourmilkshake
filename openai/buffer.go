@@ -21,20 +21,19 @@ func NewBuffer(systemPrompt, userPrompt string) *Buffer {
 	}
 }
 
-func (b *Buffer) Add(role string, content string) {
+func (buffer *Buffer) Add(role, content string) {
 	switch role {
 	case "system":
-		b.Messages = append(b.Messages, openai.SystemMessage(content))
+		buffer.Messages = append(buffer.Messages, openai.SystemMessage(content))
 	case "user":
-		b.Messages = append(b.Messages, openai.UserMessage(content))
+		buffer.Messages = append(buffer.Messages, openai.UserMessage(content))
 	case "assistant":
-		b.Messages = append(b.Messages, openai.AssistantMessage(content))
-	default:
-		// For other roles, we'll just log an error as the API only accepts specific roles
-		log.Error("Unsupported role", "role", role)
-		// Fall back to user message
-		b.Messages = append(b.Messages, openai.UserMessage(content))
+		buffer.Messages = append(buffer.Messages, openai.AssistantMessage(content))
 	}
+}
+
+func (buffer *Buffer) AddToolMessage(id, content string) {
+	buffer.Messages = append(buffer.Messages, openai.ToolMessage(id, content))
 }
 
 /*
@@ -53,26 +52,29 @@ func (buffer *Buffer) Truncate() *Buffer {
 
 	// Add first two messages
 	truncatedMessages = append(truncatedMessages, buffer.Messages[0], buffer.Messages[1])
-	totalTokens += buffer.estimateTokens("system", buffer.Messages[0].(openai.ChatCompletionSystemMessageParam).Content.String())
-	totalTokens += buffer.estimateTokens("user", buffer.Messages[1].(openai.ChatCompletionUserMessageParam).Content.String())
+	totalTokens += buffer.estimateTokens(buffer.Messages[0].(openai.ChatCompletionSystemMessageParam).Content.String(), "system")
+	totalTokens += buffer.estimateTokens(buffer.Messages[1].(openai.ChatCompletionUserMessageParam).Content.String(), "user")
 
 	// Start from the most recent message for the rest
 	for i := len(buffer.Messages) - 1; i >= 2; i-- {
 		msg := buffer.Messages[i]
 
+		var messageTokens int
 		switch msg := msg.(type) {
-		case openai.ChatCompletionAssistantMessageParam:
-			totalTokens += buffer.estimateTokens("assistant", msg.Content.String())
-		case openai.ChatCompletionUserMessageParam:
-			totalTokens += buffer.estimateTokens("user", msg.Content.String())
 		case openai.ChatCompletionSystemMessageParam:
-			totalTokens += buffer.estimateTokens("system", msg.Content.String())
+			messageTokens = buffer.estimateTokens(msg.Content.String(), "system")
+		case openai.ChatCompletionUserMessageParam:
+			messageTokens = buffer.estimateTokens(msg.Content.String(), "user")
+		case openai.ChatCompletionAssistantMessageParam:
+			messageTokens = buffer.estimateTokens(msg.Content.String(), "assistant")
 		case openai.ChatCompletionToolMessageParam:
-			totalTokens += buffer.estimateTokens("tool", msg.Content.String())
-		default:
+			messageTokens = buffer.estimateTokens(msg.Content.String(), "tool")
 		}
-		if totalTokens <= maxTokens {
+
+		if totalTokens+messageTokens <= maxTokens {
 			truncatedMessages = append([]openai.ChatCompletionMessageParamUnion{msg}, truncatedMessages[2:]...)
+			truncatedMessages = append(buffer.Messages[0:2], truncatedMessages...)
+			totalTokens += messageTokens
 		} else {
 			break
 		}

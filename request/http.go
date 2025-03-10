@@ -138,18 +138,18 @@ func (h *HTTPRequest) Execute(args map[string]any) (string, error) {
 }
 
 func (h *HTTPRequest) Schema() any {
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"url": map[string]interface{}{
+		"properties": map[string]any{
+			"url": map[string]any{
 				"type":        "string",
 				"description": "The URL to request",
 			},
-			"body": map[string]interface{}{
+			"body": map[string]any{
 				"type":        "string",
 				"description": "The body of the request",
 			},
-			"headers": map[string]interface{}{
+			"headers": map[string]any{
 				"type":        "object",
 				"description": "The headers of the request",
 			},

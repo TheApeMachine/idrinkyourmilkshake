@@ -2,6 +2,7 @@ package browser
 
 import (
 	"fmt"
+	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/charmbracelet/log"
@@ -36,19 +37,13 @@ type BrowserExtractor struct {
 func NewBrowserExtractor() models.ToolType {
 	return &BrowserExtractor{
 		ToolName:        "extract_page_content",
-		ToolDescription: "Extracts content from the current page",
+		ToolDescription: "Extracts the full content from the current page and converts it to markdown",
 		ToolParameters: models.Parameter{
-			Type: "object",
-			Properties: []models.Property{
-				{
-					Name:        "selector",
-					Type:        "string",
-					Description: "CSS selector to extract content from",
-				},
-			},
-			Required: true,
+			Type:       "object",
+			Properties: []models.Property{},
+			Required:   true,
 		},
-		Required: []string{"selector"},
+		Required: []string{},
 	}
 }
 
@@ -61,20 +56,18 @@ func (be *BrowserExtractor) Description() string {
 }
 
 func (be *BrowserExtractor) Execute(args map[string]any) (string, error) {
-	selector, ok := args["selector"].(string)
-	if !ok {
-		selector = "body" // Default to body if no selector is provided
-		log.Info("No selector provided, defaulting to body")
-	} else {
-		log.Info("Extracting content with selector", "selector", selector)
-	}
+	selector := "body"
 
-	log.Info("Finding element in page")
+	log.Info("Extracting content with selector", "selector", selector)
+
 	element := page.MustElement(selector)
 	if element == nil {
 		log.Error("Element not found", "selector", selector)
 		return "", fmt.Errorf("element not found: %s", selector)
 	}
+
+	// Start highlighting the element - use blue for extraction
+	highlightElement(page, selector)
 
 	log.Info("Getting HTML content from element")
 	html, err := element.HTML()
@@ -95,15 +88,10 @@ func (be *BrowserExtractor) Execute(args map[string]any) (string, error) {
 }
 
 func (be *BrowserExtractor) Schema() any {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"selector": map[string]interface{}{
-				"type":        "string",
-				"description": "CSS selector to extract content from",
-			},
-		},
-		"required": []string{"selector"},
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+		"required":   []string{},
 	}
 }
 
@@ -154,15 +142,15 @@ func (bn *BrowserNavigator) Execute(args map[string]any) (string, error) {
 
 	log.Info("Navigating browser to URL", "url", url)
 	page.MustNavigate(url).MustWaitStable()
-	log.Info("Successfully navigated to URL and page is stable", "url")
-	return "Navigated to " + url, nil
+	log.Info("Successfully navigated to URL and page is stable", "url", url)
+	return "Successfully navigated to " + url, nil
 }
 
 func (bn *BrowserNavigator) Schema() any {
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"url": map[string]interface{}{
+		"properties": map[string]any{
+			"url": map[string]any{
 				"type":        "string",
 				"description": "The URL to navigate to",
 			},
@@ -217,16 +205,26 @@ func (bc *BrowserClicker) Execute(args map[string]any) (string, error) {
 	}
 
 	log.Info("Clicking element with selector", "selector", selector)
-	page.MustElement(selector).MustClick()
+
+	// Start highlighting the element before clicking - use green for clicking
+	highlightElement(page, selector)
+
+	// Add a small delay to make the highlight visible before the click
+	time.Sleep(500 * time.Millisecond)
+
+	// Click the element
+	element := page.MustElement(selector)
+	element.MustClick()
+
 	log.Info("Successfully clicked element", "selector", selector)
 	return "clicked " + selector, nil
 }
 
 func (bc *BrowserClicker) Schema() any {
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"selector": map[string]interface{}{
+		"properties": map[string]any{
+			"selector": map[string]any{
 				"type":        "string",
 				"description": "The selector of the element to click",
 			},
@@ -252,7 +250,7 @@ func NewBrowserJavaScriptExecutor() models.ToolType {
 				{
 					Name:        "script",
 					Type:        "string",
-					Description: "The JavaScript code to execute",
+					Description: "The JavaScript code to execute, you must supply a function that returns a string, no exceptions",
 				},
 			},
 			Required: true,
@@ -288,12 +286,12 @@ func (bje *BrowserJavaScriptExecutor) Execute(args map[string]any) (string, erro
 }
 
 func (bje *BrowserJavaScriptExecutor) Schema() any {
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"script": map[string]interface{}{
+		"properties": map[string]any{
+			"script": map[string]any{
 				"type":        "string",
-				"description": "The JavaScript code to execute",
+				"description": "The JavaScript code to execute, you must supply a function that returns a string, no exceptions",
 			},
 		},
 		"required": []string{"script"},
@@ -314,4 +312,49 @@ func ExtractPageContent(browser *rod.Browser, selector string) (string, error) {
 
 	log.Info("Successfully extracted and converted content", "markdownSize", len(markdown))
 	return markdown, nil
+}
+
+// highlightElement creates a simple highlight around an element and scrolls to it.
+// Returns a unique ID for the created highlight element, which can be used to remove it later.
+func highlightElement(page *rod.Page, selector string) {
+	page.MustEval(`(selector) => {
+		const el = document.querySelector(selector);
+
+		if (!el) {
+			return "Element not found";
+		}
+
+		window.scrollTo({
+			top: el.offsetTop - (window.innerHeight / 2),
+			behavior: "smooth"
+		});
+
+		const rect = el.getBoundingClientRect();
+		highlighter = document.createElement("div");
+		document.body.appendChild(highlighter);
+		
+		highlighter.style.position = "absolute";
+		highlighter.style.left = (rect.left + window.scrollX) + "px";
+		highlighter.style.top = (rect.top + window.scrollY) + "px";
+		highlighter.style.width = rect.width + "px";
+		highlighter.style.height = rect.height + "px";
+		highlighter.style.pointerEvents = "none";
+		highlighter.style.zIndex = "10000";
+		highlighter.style.backgroundColor = "rgba(250, 224, 95, 0.1)";
+
+		// Perform a double pulse animation to highlight the element, then remove it.
+		highlighter.animate([
+			{ backgroundColor: "rgba(250, 224, 95, 0.1)", offset: 0.3 },
+			{ backgroundColor: "rgba(250, 224, 95, 0.9)", offset: 0.6 },
+		], {
+			duration: 1000,
+			iterations: 2,
+		});
+
+		setTimeout(() => {
+			highlighter.remove();
+		}, 2000);
+
+		return ""
+	}`, selector)
 }

@@ -6,11 +6,14 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/log"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/theapemachine/idrinkyourmilkshake/browser"
 	"github.com/theapemachine/idrinkyourmilkshake/models"
+	"github.com/theapemachine/idrinkyourmilkshake/mongodb"
 	"github.com/theapemachine/idrinkyourmilkshake/request"
+	"github.com/theapemachine/idrinkyourmilkshake/utils"
 )
 
 // Client wraps the OpenAI API client with additional functionality
@@ -40,7 +43,10 @@ type ToolExecutor interface {
 }
 
 // ProcessToolCall handles a single tool call
-func (c *Client) ProcessToolCall(toolCall openai.ChatCompletionMessageToolCall, params *openai.ChatCompletionNewParams) error {
+func (c *Client) ProcessToolCall(
+	toolCall openai.ChatCompletionMessageToolCall,
+	params *openai.ChatCompletionNewParams,
+) error {
 	// Parse the arguments
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
@@ -81,45 +87,49 @@ func (c *Client) getStatusMessages(toolName string, params []any) map[string]any
 	}
 }
 
+// Replace the existing getToolExecutor method with this more concise version
+
 // getToolExecutor returns the appropriate executor for a tool
 func (c *Client) getToolExecutor(toolName string, args map[string]any) (ToolExecutor, map[string]any, error) {
-	switch toolName {
-	case "extract_page_content":
-		return &browser.BrowserExtractor{}, c.getStatusMessages(toolName, []any{}), nil
+	// Define tool configurations
+	toolConfigs := map[string]struct {
+		factory    func() ToolExecutor
+		paramCheck func(args map[string]any) ([]any, error)
+	}{
+		"extract_page_content": {
+			factory: func() ToolExecutor { return &browser.BrowserExtractor{} },
+			paramCheck: func(args map[string]any) ([]any, error) {
+				return []any{}, nil
+			},
+		},
+		"browser_navigate": {
+			factory: func() ToolExecutor { return &browser.BrowserNavigator{} },
+			paramCheck: func(args map[string]any) ([]any, error) {
+				url, ok := args["url"].(string)
+				if !ok {
+					return nil, fmt.Errorf("url parameter is required")
+				}
+				return []any{"url", url}, nil
+			},
+		},
+		// ... similar entries for other tools
+	}
 
-	case "browser_navigate":
-		url, ok := args["url"].(string)
-		if !ok {
-			log.Error("URL parameter is missing")
-			return nil, nil, fmt.Errorf("url parameter is required")
-		}
-		return &browser.BrowserNavigator{}, c.getStatusMessages(toolName, []any{"url", url}), nil
-
-	case "browser_execute_js":
-		script, ok := args["script"].(string)
-		if !ok {
-			log.Error("Script parameter is missing")
-			return nil, nil, fmt.Errorf("script parameter is required")
-		}
-		return &browser.BrowserJavaScriptExecutor{}, c.getStatusMessages(toolName, []any{"script", script}), nil
-
-	case "browser_click":
-		selector, ok := args["selector"].(string)
-		if !ok {
-			log.Error("Selector parameter is missing")
-			return nil, nil, fmt.Errorf("selector parameter is required")
-		}
-		return &browser.BrowserClicker{}, c.getStatusMessages(toolName, []any{"selector", selector}), nil
-
-	case "http_request":
-		method, _ := args["method"].(string)
-		url, _ := args["url"].(string)
-		return &request.HTTPRequest{}, c.getStatusMessages(toolName, []any{"method", method, "url", url}), nil
-
-	default:
+	// Look up the tool configuration
+	config, exists := toolConfigs[toolName]
+	if !exists {
 		log.Error("Unknown tool called", "tool", toolName)
 		return nil, nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
+
+	// Check parameters and get log details
+	params, err := config.paramCheck(args)
+	if err != nil {
+		log.Error(err.Error())
+		return nil, nil, err
+	}
+
+	return config.factory(), c.getStatusMessages(toolName, params), nil
 }
 
 func (c *Client) Execute(
@@ -128,46 +138,13 @@ func (c *Client) Execute(
 ) (string, error) {
 	log.Info("Starting OpenAI client execution", "maxIterations", maxIterations)
 
-	// Create a simplified schema for APIConfig that follows OpenAI's expectations
-	apiConfigSchema := map[string]interface{}{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties": map[string]interface{}{
-			"integration": map[string]interface{}{
-				"type":        "string",
-				"description": "The name of the integration",
-			},
-			"account_id": map[string]interface{}{
-				"type":        "string",
-				"description": "The account ID",
-			},
-			"base_url": map[string]interface{}{
-				"type":        "string",
-				"description": "The base URL",
-			},
-			"jobs": map[string]interface{}{
-				"type": "array",
-				"items": map[string]interface{}{
-					"type":                 "object",
-					"additionalProperties": false,
-					"properties": map[string]interface{}{
-						"name": map[string]interface{}{
-							"type":        "string",
-							"description": "Name of the job",
-						},
-					},
-					"required": []string{"name"},
-				},
-			},
-		},
-		"required": []string{"integration", "account_id", "base_url", "jobs"},
-	}
+	schema := utils.GenerateSchema[models.APIConfig]()
 
 	schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
 		Name:        openai.F("api_config"),
 		Description: openai.F("The API configuration"),
-		Schema:      openai.F(any(apiConfigSchema)),
-		Strict:      openai.Bool(true),
+		Schema:      openai.F(schema),
+		Strict:      openai.Bool(false),
 	}
 
 	availableTools := []models.ToolType{
@@ -176,6 +153,7 @@ func (c *Client) Execute(
 		models.NewTool(browser.NewBrowserJavaScriptExecutor()),
 		models.NewTool(browser.NewBrowserClicker()),
 		models.NewTool(request.NewHTTPRequest()),
+		models.NewTool(mongodb.NewMongoDBInspector()),
 	}
 
 	tools := []openai.ChatCompletionToolParam{}
@@ -192,7 +170,7 @@ func (c *Client) Execute(
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:       openai.F(openai.ChatModelGPT4oMini),
+		Model:       openai.F(openai.ChatModelGPT4o),
 		Messages:    openai.F(buffer.Truncate().Messages),
 		Tools:       openai.F(tools),
 		Temperature: openai.F(0.0),
@@ -208,25 +186,24 @@ func (c *Client) Execute(
 	for i := range maxIterations {
 		log.Info("Executing iteration", "iteration", i+1, "of", maxIterations)
 
+		log.Info("Messages", "messages", len(params.Messages.Value))
+		spew.Dump(params)
 		completion, err := c.client.Chat.Completions.New(c.ctx, params)
+
 		if err != nil {
 			log.Error("OpenAI API error", "error", err)
 			return "", fmt.Errorf("OpenAI API error: %w", err)
 		}
 
-		// If no tool calls are requested, return the final result
 		toolCalls := completion.Choices[0].Message.ToolCalls
+
 		if len(toolCalls) == 0 {
 			log.Info("No tool calls requested, returning final result")
-			return completion.Choices[0].Message.Content, nil
+			continue
 		}
 
-		log.Info("Processing tool calls", "count", len(toolCalls))
-
-		// Add the assistant's message to the conversation
 		params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
 
-		// Process each tool call
 		for _, toolCall := range toolCalls {
 			if err := c.ProcessToolCall(toolCall, &params); err != nil {
 				return "", err
@@ -254,19 +231,4 @@ func schemaToFunctionParameters(schema any) openai.FunctionParameters {
 	}
 
 	return params
-}
-
-// convertSchemaToMap converts a jsonschema.Schema to a map[string]interface{}
-func convertSchemaToMap(schema any) (map[string]interface{}, error) {
-	bytes, err := json.Marshal(schema)
-	if err != nil {
-		return nil, err
-	}
-
-	var schemaMap map[string]interface{}
-	if err := json.Unmarshal(bytes, &schemaMap); err != nil {
-		return nil, err
-	}
-
-	return schemaMap, nil
 }
