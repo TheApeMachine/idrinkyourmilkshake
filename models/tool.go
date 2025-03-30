@@ -21,9 +21,10 @@ type Parameter struct {
 }
 
 type Property struct {
-	Type        string `json:"type" jsonschema:"description=The type of the property,required"`
-	Description string `json:"description" jsonschema:"description=The description of the property,required"`
-	Name        string `json:"name" jsonschema:"description=The name of the property"`
+	Type        string   `json:"type" jsonschema:"description=The type of the property,required"`
+	Description string   `json:"description" jsonschema:"description=The description of the property,required"`
+	Name        string   `json:"name" jsonschema:"description=The name of the property"`
+	Enum        []string `json:"enum" jsonschema:"description=The enum of the property,required"`
 }
 
 func NewTool(toolType ToolType) ToolType {

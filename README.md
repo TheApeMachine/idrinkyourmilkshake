@@ -1,6 +1,6 @@
 # I Drink Your Milkshake 🥤
 
-> _"I drink your API documentation milkshake. I drink it up!"_
+> _"I drink your API milkshake. I drink it up!"_
 
 [![Go](https://img.shields.io/badge/Go-1.18+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![OpenAI](https://img.shields.io/badge/OpenAI-API-412991?style=flat&logo=openai)](https://openai.com/)
@@ -8,7 +8,7 @@
 
 ## 🧠 AI-Powered API Integration Assistant
 
-**I Drink Your Milkshake** is an intelligent tool that automates the tedious process of integrating with third-party APIs. Using the power of OpenAI's GPT-4, it analyzes API documentation, extracts endpoints and data models, and generates the configuration needed to drive your integration.
+**I Drink Your Milkshake** is an intelligent tool that automates the tedious process of integrating with third-party APIs. Using the power of OpenAI's GPT-4o, it analyzes API documentation, extracts endpoints and data models, and generates the configuration needed to drive your integration.
 
 No more spending hours manually reading through API docs and building integration configs by hand!
 
@@ -22,12 +22,23 @@ No more spending hours manually reading through API docs and building integratio
 
 ## 💻 How It Works
 
-1. The application starts an OpenAI session with a specialized prompt that turns GPT-4 into an API integration expert
-2. You provide a URL to the API documentation
-3. The AI navigates through the documentation using a real Chrome browser
-4. It extracts essential information about endpoints and data models
-5. When needed, it can make HTTP requests to test and verify its understanding
-6. Finally, it generates a comprehensive configuration object representing the API
+There are two distinct, and decoupled processes that make up this project.
+
+### API Discovery & Mapping
+
+The purpose here is to end up with a configuration object that can drive the engine, once the discovery and mapping stage is complete.
+
+The following things are the steps that need to take place at this stage.
+
+1. The AI is given a couple of browser-based tools so it can go online and read the API documentation, from the URL provided on the command line. This is often just an HTML page, which will be converted to Markdown to limit the amount of tokens that would come with reading the raw HTML.
+2. The AI also has a couple of tools to inspect the MongoDB database, which it can use to identify the target collections and schemas.
+3. The AI is given a structured output jsonschema configuration, to make sure it is forced to structure its final output in a controlled manner, which will become the configuration object that will drive the engine.
+
+### Engine
+
+The engine is the mechanism that will actually run the integration, once the previous step is fully complete and we have a configuration object to drive the engine.
+
+This will be deployed on Kubernetes as a cron job, and basically just make calls to the external API, and using the configuration object pull, convert, and load the API data into the correct MongoDB collections.
 
 ## 🚀 Getting Started
 

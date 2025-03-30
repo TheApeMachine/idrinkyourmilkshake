@@ -19,53 +19,54 @@ type MongoDBInspector struct {
 }
 
 func NewMongoDBInspector() models.ToolType {
-	params := models.Parameter{
-		Type: "object",
-		Properties: []models.Property{
-			{
-				Name:        "connection_string",
-				Type:        "string",
-				Description: "MongoDB connection string",
-			},
-			{
-				Name:        "database",
-				Type:        "string",
-				Description: "The database name to inspect",
-			},
-			{
-				Name:        "collection",
-				Type:        "string",
-				Description: "Optional: The collection name to inspect schema (if not provided, will list all collections)",
-			},
-			{
-				Name:        "sample_size",
-				Type:        "integer",
-				Description: "Optional: Number of documents to sample for schema inference (default: 10)",
-			},
-		},
-		Required: true,
-	}
-
-	inspector := &MongoDBInspector{
+	return &MongoDBInspector{
 		BaseTool: models.BaseTool{
 			ToolName:        "mongodb_inspector",
 			ToolDescription: "Inspects MongoDB collections and their schemas",
-			ToolParameters:  params,
-			Required:        []string{"connection_string", "database"},
+			ToolParameters: models.Parameter{
+				Type: "object",
+				Properties: []models.Property{
+					{
+						Name:        "collection",
+						Type:        "string",
+						Description: "Optional: The collection name to inspect schema (if not provided, will list all collections)",
+					},
+					{
+						Name:        "sample_size",
+						Type:        "integer",
+						Description: "Optional: Number of documents to sample for schema inference (default: 10)",
+					},
+				},
+				Required: true,
+			},
+			Required: []string{"connection_string", "database"},
 		},
 	}
-	
-	// Remove this field assignment as it conflicts with the method implementation
-	// inspector.Schema = func() any {
-	//     return inspector.ToolParameters
-	// }
-	
-	return inspector
 }
 
-// Schema implements the models.ToolType interface
+func (mi *MongoDBInspector) Name() string {
+	return mi.ToolName
+}
+
+func (mi *MongoDBInspector) Description() string {
+	return mi.ToolDescription
+}
+
 func (mi *MongoDBInspector) Schema() any {
-	return mi.ToolParameters
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"collection": map[string]any{
+				"type":        "string",
+				"description": "Optional: The collection name to inspect schema (if not provided, will list all collections)",
+			},
+			"sample_size": map[string]any{
+				"type":        "integer",
+				"description": "Optional: Number of documents to sample for schema inference (default: 100)",
+			},
+		},
+		"required": []string{"connection_string", "database"},
+	}
 }
 
 // Only need to implement Execute and Schema methods
@@ -73,10 +74,7 @@ func (mi *MongoDBInspector) Execute(args map[string]any) (string, error) {
 	// Extract arguments
 	connectionString := os.Getenv("MONGODB_URI")
 
-	database, ok := args["database"].(string)
-	if !ok {
-		return "", fmt.Errorf("database is required")
-	}
+	database := "FanAppDev2"
 
 	collection, _ := args["collection"].(string)
 
@@ -155,7 +153,9 @@ func (mi *MongoDBInspector) getCollectionSchema(ctx context.Context, db *mongo.D
 	}
 
 	// Sample documents to infer schema
-	findOptions := options.Find().SetLimit(int64(sampleSize))
+	findOptions := options.Find().
+		SetLimit(int64(sampleSize)).
+		SetSort(bson.D{{Key: "Created", Value: -1}})
 	cursor, err := coll.Find(ctx, bson.D{}, findOptions)
 	if err != nil {
 		log.Error("Failed to query collection", "error", err)

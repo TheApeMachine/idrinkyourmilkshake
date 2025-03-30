@@ -52,23 +52,22 @@ func (buffer *Buffer) Truncate() *Buffer {
 
 	// Add first two messages
 	truncatedMessages = append(truncatedMessages, buffer.Messages[0], buffer.Messages[1])
-	totalTokens += buffer.estimateTokens(buffer.Messages[0].(openai.ChatCompletionSystemMessageParam).Content.String(), "system")
-	totalTokens += buffer.estimateTokens(buffer.Messages[1].(openai.ChatCompletionUserMessageParam).Content.String(), "user")
+	totalTokens += buffer.estimateTokens(buffer.Messages[0].OfSystem.Content.OfString.String(), "system")
+	totalTokens += buffer.estimateTokens(buffer.Messages[1].OfUser.Content.OfString.String(), "user")
 
 	// Start from the most recent message for the rest
 	for i := len(buffer.Messages) - 1; i >= 2; i-- {
 		msg := buffer.Messages[i]
 
 		var messageTokens int
-		switch msg := msg.(type) {
-		case openai.ChatCompletionSystemMessageParam:
-			messageTokens = buffer.estimateTokens(msg.Content.String(), "system")
-		case openai.ChatCompletionUserMessageParam:
-			messageTokens = buffer.estimateTokens(msg.Content.String(), "user")
-		case openai.ChatCompletionAssistantMessageParam:
-			messageTokens = buffer.estimateTokens(msg.Content.String(), "assistant")
-		case openai.ChatCompletionToolMessageParam:
-			messageTokens = buffer.estimateTokens(msg.Content.String(), "tool")
+		if msg.OfSystem != nil {
+			messageTokens = buffer.estimateTokens(msg.OfSystem.Content.OfString.String(), "system")
+		} else if msg.OfUser != nil {
+			messageTokens = buffer.estimateTokens(msg.OfUser.Content.OfString.String(), "user")
+		} else if msg.OfAssistant != nil {
+			messageTokens = buffer.estimateTokens(msg.OfAssistant.Content.OfString.String(), "assistant")
+		} else if msg.OfTool != nil {
+			messageTokens = buffer.estimateTokens(msg.OfTool.Content.OfString.String(), "tool")
 		}
 
 		if totalTokens+messageTokens <= maxTokens {

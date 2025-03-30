@@ -9,10 +9,10 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
 	"github.com/theapemachine/idrinkyourmilkshake/browser"
 	"github.com/theapemachine/idrinkyourmilkshake/models"
 	"github.com/theapemachine/idrinkyourmilkshake/mongodb"
-	"github.com/theapemachine/idrinkyourmilkshake/request"
 	"github.com/theapemachine/idrinkyourmilkshake/utils"
 )
 
@@ -20,14 +20,16 @@ import (
 type Client struct {
 	client *openai.Client
 	ctx    context.Context
+	tools  map[string]models.ToolType
 }
 
 // NewClient creates a new OpenAI client with the given API key
 func NewClient(apiKey string) *Client {
 	client := openai.NewClient(option.WithAPIKey(apiKey))
 	return &Client{
-		client: client,
+		client: &client,
 		ctx:    context.Background(),
+		tools:  make(map[string]models.ToolType),
 	}
 }
 
@@ -37,16 +39,99 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	return c
 }
 
-// ToolExecutor is the interface for all tool executors
-type ToolExecutor interface {
-	Execute(args map[string]any) (string, error)
+// RegisterTools registers tools with the client
+func (c *Client) RegisterTools(tools []models.ToolType) {
+	for _, tool := range tools {
+		c.tools[tool.Name()] = tool
+	}
+}
+
+// CreateCompletionParams creates OpenAI completion parameters with tools
+func (c *Client) CreateCompletionParams(systemPrompt, userPrompt string) *openai.ChatCompletionNewParams {
+	toolParams := []openai.ChatCompletionToolParam{}
+
+	for _, tool := range c.tools {
+		toolParams = append(toolParams, openai.ChatCompletionToolParam{
+			Type: "function",
+			Function: openai.FunctionDefinitionParam{
+				Name:        tool.Name(),
+				Description: param.NewOpt(tool.Description()),
+				Parameters:  schemaToFunctionParameters(tool.Schema()),
+			},
+		})
+	}
+
+	// Generate schema for APIConfig
+	schema := utils.GenerateSchema[models.APIConfig]()
+	schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
+		Name:        "api_config",
+		Description: param.NewOpt("The API configuration"),
+		Schema:      param.NewOpt(schema),
+		Strict:      param.NewOpt(true),
+	}
+
+	return &openai.ChatCompletionNewParams{
+		Model: openai.ChatModelGPT4o,
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(systemPrompt),
+			openai.UserMessage(userPrompt),
+		},
+		Tools: toolParams,
+		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
+				Type:       "json_schema",
+				JSONSchema: schemaParam,
+			},
+		},
+	}
+}
+
+// ExecuteWithTools executes the OpenAI completion with tool support
+func (c *Client) ExecuteWithTools(params *openai.ChatCompletionNewParams, maxIterations int) (string, error) {
+	for i := 0; i < maxIterations; i++ {
+		log.Info("Executing iteration", "iteration", i+1)
+
+		completion, err := c.client.Chat.Completions.New(c.ctx, *params)
+		if err != nil {
+			log.Error("OpenAI API error", "error", err)
+			return "", fmt.Errorf("OpenAI API error: %w", err)
+		}
+
+		toolCalls := completion.Choices[0].Message.ToolCalls
+
+		if len(toolCalls) == 0 {
+			// Validate JSON response
+			var result map[string]interface{}
+			if err := json.Unmarshal([]byte(completion.Choices[0].Message.Content), &result); err != nil {
+				return "", fmt.Errorf("invalid JSON response: %w", err)
+			}
+			return completion.Choices[0].Message.Content, nil
+		}
+
+		// Add assistant message
+		message := openai.ChatCompletionMessageParamUnion{
+			OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+				Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: param.NewOpt(completion.Choices[0].Message.Content),
+				},
+				ToolCalls: convertToolCalls(completion.Choices[0].Message.ToolCalls),
+			},
+		}
+		params.Messages = append(params.Messages, message)
+
+		// Process tool calls
+		for _, toolCall := range toolCalls {
+			if err := c.ProcessToolCall(toolCall, params); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	return "", fmt.Errorf("reached maximum iterations without resolution")
 }
 
 // ProcessToolCall handles a single tool call
-func (c *Client) ProcessToolCall(
-	toolCall openai.ChatCompletionMessageToolCall,
-	params *openai.ChatCompletionNewParams,
-) error {
+func (c *Client) ProcessToolCall(toolCall openai.ChatCompletionMessageToolCall, params *openai.ChatCompletionNewParams) error {
 	// Parse the arguments
 	var args map[string]any
 	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
@@ -54,82 +139,60 @@ func (c *Client) ProcessToolCall(
 		return fmt.Errorf("error parsing arguments: %w", err)
 	}
 
-	// Get the appropriate executor
-	executor, logDetails, err := c.getToolExecutor(toolCall.Function.Name, args)
-	if err != nil {
-		return err
+	tool, exists := c.tools[toolCall.Function.Name]
+	if !exists {
+		log.Error("Unknown tool called", "tool", toolCall.Function.Name)
+		return fmt.Errorf("unknown tool: %s", toolCall.Function.Name)
 	}
 
-	// Log the action being performed
-	log.Info(logDetails["start_message"].(string), logDetails["params"].([]any)...)
-
 	// Execute the tool
-	content, err := executor.Execute(args)
+	result, err := tool.Execute(args)
 	if err != nil {
 		log.Error("Error executing tool", "tool", toolCall.Function.Name, "error", err)
 		return fmt.Errorf("error executing tool: %w", err)
 	}
 
-	// Log success
-	log.Info(logDetails["success_message"].(string))
-
 	// Add the tool call result to the conversation
-	params.Messages.Value = append(params.Messages.Value, openai.ToolMessage(toolCall.ID, content))
+	params.Messages = append(params.Messages, openai.ToolMessage(result, toolCall.ID))
 
 	return nil
 }
 
-func (c *Client) getStatusMessages(toolName string, params []any) map[string]any {
-	return map[string]any{
-		"start_message":   "Running " + toolName,
-		"success_message": toolName + " completed successfully",
-		"params":          params,
+// schemaToFunctionParameters converts a schema to OpenAI function parameters
+func schemaToFunctionParameters(schema any) openai.FunctionParameters {
+	bytes, err := json.Marshal(schema)
+	if err != nil {
+		log.Error("Failed to marshal schema", "error", err)
+		return openai.FunctionParameters{}
 	}
+
+	var params openai.FunctionParameters
+	if err := json.Unmarshal(bytes, &params); err != nil {
+		log.Error("Failed to unmarshal schema", "error", err)
+		return openai.FunctionParameters{}
+	}
+
+	return params
 }
 
-// Replace the existing getToolExecutor method with this more concise version
-
-// getToolExecutor returns the appropriate executor for a tool
-func (c *Client) getToolExecutor(toolName string, args map[string]any) (ToolExecutor, map[string]any, error) {
-	// Define tool configurations
-	toolConfigs := map[string]struct {
-		factory    func() ToolExecutor
-		paramCheck func(args map[string]any) ([]any, error)
-	}{
-		"extract_page_content": {
-			factory: func() ToolExecutor { return &browser.BrowserExtractor{} },
-			paramCheck: func(args map[string]any) ([]any, error) {
-				return []any{}, nil
+// Helper function to convert tool calls
+func convertToolCalls(calls []openai.ChatCompletionMessageToolCall) []openai.ChatCompletionMessageToolCallParam {
+	params := make([]openai.ChatCompletionMessageToolCallParam, len(calls))
+	for i, call := range calls {
+		params[i] = openai.ChatCompletionMessageToolCallParam{
+			Function: openai.ChatCompletionMessageToolCallFunctionParam{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
 			},
-		},
-		"browser_navigate": {
-			factory: func() ToolExecutor { return &browser.BrowserNavigator{} },
-			paramCheck: func(args map[string]any) ([]any, error) {
-				url, ok := args["url"].(string)
-				if !ok {
-					return nil, fmt.Errorf("url parameter is required")
-				}
-				return []any{"url", url}, nil
-			},
-		},
-		// ... similar entries for other tools
+			ID: call.ID,
+		}
 	}
+	return params
+}
 
-	// Look up the tool configuration
-	config, exists := toolConfigs[toolName]
-	if !exists {
-		log.Error("Unknown tool called", "tool", toolName)
-		return nil, nil, fmt.Errorf("unknown tool: %s", toolName)
-	}
-
-	// Check parameters and get log details
-	params, err := config.paramCheck(args)
-	if err != nil {
-		log.Error(err.Error())
-		return nil, nil, err
-	}
-
-	return config.factory(), c.getStatusMessages(toolName, params), nil
+// ToolExecutor is the interface for all tool executors
+type ToolExecutor interface {
+	Execute(args map[string]any) (string, error)
 }
 
 func (c *Client) Execute(
@@ -141,10 +204,10 @@ func (c *Client) Execute(
 	schema := utils.GenerateSchema[models.APIConfig]()
 
 	schemaParam := openai.ResponseFormatJSONSchemaJSONSchemaParam{
-		Name:        openai.F("api_config"),
-		Description: openai.F("The API configuration"),
-		Schema:      openai.F(schema),
-		Strict:      openai.Bool(false),
+		Name:        "api_config",
+		Description: param.NewOpt("The API configuration"),
+		Schema:      param.NewOpt(schema),
+		Strict:      param.NewOpt(false),
 	}
 
 	availableTools := []models.ToolType{
@@ -152,7 +215,6 @@ func (c *Client) Execute(
 		models.NewTool(browser.NewBrowserNavigator()),
 		models.NewTool(browser.NewBrowserJavaScriptExecutor()),
 		models.NewTool(browser.NewBrowserClicker()),
-		models.NewTool(request.NewHTTPRequest()),
 		models.NewTool(mongodb.NewMongoDBInspector()),
 	}
 
@@ -160,33 +222,33 @@ func (c *Client) Execute(
 
 	for _, tool := range availableTools {
 		tools = append(tools, openai.ChatCompletionToolParam{
-			Type: openai.F(openai.ChatCompletionToolTypeFunction),
-			Function: openai.F(openai.FunctionDefinitionParam{
-				Name:        openai.String(tool.Name()),
-				Description: openai.String(tool.Description()),
-				Parameters:  openai.F(schemaToFunctionParameters(tool.Schema())),
-			}),
+			Type: "function",
+			Function: openai.FunctionDefinitionParam{
+				Name:        tool.Name(),
+				Description: param.NewOpt(tool.Description()),
+				Parameters:  schemaToFunctionParameters(tool.Schema()),
+			},
 		})
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:       openai.F(openai.ChatModelGPT4o),
-		Messages:    openai.F(buffer.Truncate().Messages),
-		Tools:       openai.F(tools),
-		Temperature: openai.F(0.0),
-		ResponseFormat: openai.F[openai.ChatCompletionNewParamsResponseFormatUnion](
-			openai.ResponseFormatJSONSchemaParam{
-				Type:       openai.F(openai.ResponseFormatJSONSchemaTypeJSONSchema),
-				JSONSchema: openai.F(schemaParam),
+		Model:       openai.ChatModelGPT4o,
+		Messages:    buffer.Truncate().Messages,
+		Tools:       tools,
+		Temperature: param.NewOpt(0.0),
+		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
+				Type:       "json_schema",
+				JSONSchema: schemaParam,
 			},
-		),
+		},
 	}
 
 	// Iterate until the model stops requesting tool calls
 	for i := range maxIterations {
 		log.Info("Executing iteration", "iteration", i+1, "of", maxIterations)
 
-		log.Info("Messages", "messages", len(params.Messages.Value))
+		log.Info("Messages", "messages", len(params.Messages))
 		spew.Dump(params)
 		completion, err := c.client.Chat.Completions.New(c.ctx, params)
 
@@ -202,7 +264,16 @@ func (c *Client) Execute(
 			continue
 		}
 
-		params.Messages.Value = append(params.Messages.Value, completion.Choices[0].Message)
+		// Convert the message to the correct type before appending
+		message := openai.ChatCompletionMessageParamUnion{
+			OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+				Content: openai.ChatCompletionAssistantMessageParamContentUnion{
+					OfString: param.NewOpt(completion.Choices[0].Message.Content),
+				},
+				ToolCalls: convertToolCalls(completion.Choices[0].Message.ToolCalls),
+			},
+		}
+		params.Messages = append(params.Messages, message)
 
 		for _, toolCall := range toolCalls {
 			if err := c.ProcessToolCall(toolCall, &params); err != nil {
@@ -213,22 +284,4 @@ func (c *Client) Execute(
 
 	log.Error("Maximum iterations reached without resolution", "maxIterations", maxIterations)
 	return "", fmt.Errorf("reached maximum iterations without resolution")
-}
-
-// schemaToFunctionParameters converts a jsonschema.Schema to the format expected by the OpenAI API
-func schemaToFunctionParameters(schema any) openai.FunctionParameters {
-	// Convert schema to map[string]any
-	bytes, err := json.Marshal(schema)
-	if err != nil {
-		log.Error("Failed to marshal schema", "error", err)
-		return openai.FunctionParameters{}
-	}
-
-	var params openai.FunctionParameters
-	if err := json.Unmarshal(bytes, &params); err != nil {
-		log.Error("Failed to unmarshal schema to FunctionParameters", "error", err)
-		return openai.FunctionParameters{}
-	}
-
-	return params
 }

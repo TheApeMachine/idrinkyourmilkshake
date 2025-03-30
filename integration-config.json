@@ -1,0 +1,149 @@
+{
+  "integration": "Dyflexis",
+  "base_url": "https://app.planning.nu/{systemName}/api2",
+  "auth": {
+    "type": "Token",
+    "outputs": []
+  },
+  "jobs": [
+    {
+      "id": "fetchOffices",
+      "steps": [
+        {
+          "type": "http",
+          "id": "getOffices",
+          "endpoint": "/offices",
+          "method": "GET",
+          "outputs": [
+            {
+              "key": "offices",
+              "value": "offices"
+            }
+          ],
+          "collection": "Office",
+          "operation": "insert",
+          "documents": [
+            {
+              "key": "id",
+              "value": "id"
+            },
+            {
+              "key": "name",
+              "value": "name"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "processEmployees",
+      "steps": [
+        {
+          "type": "http",
+          "id": "listPersonnelNumbers",
+          "endpoint": "/employee-mappings",
+          "method": "GET",
+          "outputs": [
+            {
+              "key": "employeeMappings",
+              "value": "employeeMappings"
+            }
+          ],
+          "collection": "EmployeeMapping",
+          "operation": "upsert",
+          "documents": [
+            {
+              "key": "dyflexisId",
+              "value": "dyflexisId"
+            },
+            {
+              "key": "personnelNumber",
+              "value": "personnelNumber"
+            }
+          ]
+        },
+        {
+          "type": "http",
+          "id": "getEmployeeData",
+          "endpoint": "/employee-data",
+          "method": "GET",
+          "outputs": [
+            {
+              "key": "employeeData",
+              "value": "employeeData"
+            }
+          ],
+          "collection": "User",
+          "operation": "update",
+          "documents": [
+            {
+              "key": "Auth0UserId",
+              "value": "dyflexisId"
+            },
+            {
+              "key": "FirstName",
+              "value": "firstName"
+            },
+            {
+              "key": "LastName",
+              "value": "lastName"
+            },
+            {
+              "key": "email",
+              "value": "email"
+            },
+            {
+              "key": "phoneNumber",
+              "value": "phoneNumber"
+            },
+            {
+              "key": "phoneNumber2",
+              "value": "phoneNumber2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "handleAttendanceRegistration",
+      "steps": [
+        {
+          "type": "http",
+          "id": "getAttendanceRegistration",
+          "endpoint": "/attendance-registration/{date}",
+          "method": "GET",
+          "outputs": [
+            {
+              "key": "attendanceRegistration",
+              "value": "attendanceRegistration"
+            }
+          ],
+          "collection": "Absence",
+          "operation": "update",
+          "documents": [
+            {
+              "key": "EmployeeId",
+              "value": "employeeId"
+            },
+            {
+              "key": "AbsenceId",
+              "value": "attendanceRegistrationId"
+            },
+            {
+              "key": "Reason",
+              "value": "event"
+            },
+            {
+              "key": "AbsenceStartDate",
+              "value": "dateTime"
+            },
+            {
+              "key": "AbsenceEndDate",
+              "value": "dateTime"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

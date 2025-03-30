@@ -1,9 +1,13 @@
 package models
 
+import (
+	"github.com/invopop/jsonschema"
+)
+
 // Auth represents authentication details for an API
 type Auth struct {
-	Type    string   `json:"type"`
-	Outputs []Output `json:"outputs"`
+	Type    string   `json:"type" jsonschema:"description=The type of authentication (e.g., bearer, basic, oauth),required"`
+	Outputs []Output `json:"outputs" jsonschema:"description=The authentication outputs,required"`
 }
 
 // Headers represents HTTP headers for API requests
@@ -34,16 +38,34 @@ type Output struct {
 	Value string `json:"value" jsonschema:"description=Value of the output,required"`
 }
 
-// Step represents a step in a job
+// HTTPStep represents an HTTP request step
+type HTTPStep struct {
+	Type     string   `json:"type" jsonschema:"description=Type of step to execute,required,enum=http"`
+	ID       string   `json:"id" jsonschema:"description=Unique identifier for the step,required"`
+	Endpoint string   `json:"endpoint" jsonschema:"description=API endpoint to call,required"`
+	Method   string   `json:"method" jsonschema:"description=HTTP method to use,required"`
+	Outputs  []Output `json:"outputs" jsonschema:"description=Output data from the step,required"`
+}
+
+// MongoDBStep represents a MongoDB operation step
+type MongoDBStep struct {
+	Type       string     `json:"type" jsonschema:"description=Type of step to execute,required,enum=mongodb"`
+	ID         string     `json:"id" jsonschema:"description=Unique identifier for the step,required"`
+	Collection string     `json:"collection" jsonschema:"description=Collection name for database operations,required"`
+	Operation  string     `json:"operation" jsonschema:"description=Operation to perform on the collection,required"`
+	Documents  []Document `json:"documents" jsonschema:"description=Documents to insert or update in the collection,required"`
+}
+
+// Step represents a step in a job (either HTTP or MongoDB)
 type Step struct {
 	Type       string     `json:"type" jsonschema:"description=Type of step to execute,required,enum=http,enum=mongodb"`
 	ID         string     `json:"id" jsonschema:"description=Unique identifier for the step,required"`
-	Endpoint   string     `json:"endpoint,omitempty" jsonschema:"description=API endpoint to call"`
-	Method     string     `json:"method,omitempty" jsonschema:"description=HTTP method to use"`
-	Outputs    []Output   `json:"outputs,omitempty" jsonschema:"description=Output data from the step"`
-	Collection string     `json:"collection,omitempty" jsonschema:"description=Collection name for database operations"`
-	Operation  string     `json:"operation,omitempty" jsonschema:"description=Operation to perform on the collection"`
-	Documents  []Document `json:"documents,omitempty" jsonschema:"description=Documents to insert or update in the collection"`
+	Endpoint   string     `json:"endpoint" jsonschema:"description=API endpoint to call,required"`
+	Method     string     `json:"method" jsonschema:"description=HTTP method to use,required"`
+	Outputs    []Output   `json:"outputs" jsonschema:"description=Output data from the step,required"`
+	Collection string     `json:"collection" jsonschema:"description=Collection name for database operations,required"`
+	Operation  string     `json:"operation" jsonschema:"description=Operation to perform on the collection,required"`
+	Documents  []Document `json:"documents" jsonschema:"description=Documents to insert or update in the collection,required"`
 }
 
 type Document struct {
@@ -64,3 +86,24 @@ type APIConfig struct {
 	Auth        Auth   `json:"auth" jsonschema:"description=The authentication details,required"`
 	Jobs        []Job  `json:"jobs" jsonschema:"description=The jobs to run,required"`
 }
+
+func NewAPIConfig() *APIConfig {
+	return &APIConfig{
+		Integration: "",
+		BaseURL:     "",
+		Auth:        Auth{},
+	}
+}
+
+// GenerateSchema generates a JSON schema for any type
+func GenerateSchema[T any]() interface{} {
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+	var v T
+	return reflector.Reflect(v)
+}
+
+// StepSchema is the pre-generated schema for Step
+var StepSchema = GenerateSchema[Step]()
