@@ -1,145 +1,93 @@
 {
-  "integration": "Dyflexis",
-  "base_url": "https://app.planning.nu/{systemName}/api2",
+  "integration": "Shiftbase API Integration",
+  "base_url": "https://api.shiftbase.com",
   "auth": {
-    "type": "Token",
-    "outputs": []
+    "type": "API",
+    "outputs": [
+      {
+        "key": "key",
+        "value": "API secretkey123"
+      }
+    ]
   },
   "jobs": [
     {
-      "id": "fetchOffices",
+      "id": "fetch_absences",
       "steps": [
         {
           "type": "http",
-          "id": "getOffices",
-          "endpoint": "/offices",
+          "id": "step1",
+          "endpoint": "/absentees",
           "method": "GET",
           "outputs": [
             {
-              "key": "offices",
-              "value": "offices"
-            }
-          ],
-          "collection": "Office",
-          "operation": "insert",
-          "documents": [
-            {
-              "key": "id",
-              "value": "id"
-            },
-            {
-              "key": "name",
-              "value": "name"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "processEmployees",
-      "steps": [
-        {
-          "type": "http",
-          "id": "listPersonnelNumbers",
-          "endpoint": "/employee-mappings",
-          "method": "GET",
-          "outputs": [
-            {
-              "key": "employeeMappings",
-              "value": "employeeMappings"
-            }
-          ],
-          "collection": "EmployeeMapping",
-          "operation": "upsert",
-          "documents": [
-            {
-              "key": "dyflexisId",
-              "value": "dyflexisId"
-            },
-            {
-              "key": "personnelNumber",
-              "value": "personnelNumber"
-            }
-          ]
-        },
-        {
-          "type": "http",
-          "id": "getEmployeeData",
-          "endpoint": "/employee-data",
-          "method": "GET",
-          "outputs": [
-            {
-              "key": "employeeData",
-              "value": "employeeData"
-            }
-          ],
-          "collection": "User",
-          "operation": "update",
-          "documents": [
-            {
-              "key": "Auth0UserId",
-              "value": "dyflexisId"
-            },
-            {
-              "key": "FirstName",
-              "value": "firstName"
-            },
-            {
-              "key": "LastName",
-              "value": "lastName"
-            },
-            {
-              "key": "email",
-              "value": "email"
-            },
-            {
-              "key": "phoneNumber",
-              "value": "phoneNumber"
-            },
-            {
-              "key": "phoneNumber2",
-              "value": "phoneNumber2"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "handleAttendanceRegistration",
-      "steps": [
-        {
-          "type": "http",
-          "id": "getAttendanceRegistration",
-          "endpoint": "/attendance-registration/{date}",
-          "method": "GET",
-          "outputs": [
-            {
-              "key": "attendanceRegistration",
-              "value": "attendanceRegistration"
+              "key": "AbsenceId",
+              "value": "$.absentees[*].id"
             }
           ],
           "collection": "Absence",
-          "operation": "update",
+          "operation": "insert",
           "documents": [
             {
-              "key": "EmployeeId",
-              "value": "employeeId"
-            },
-            {
               "key": "AbsenceId",
-              "value": "attendanceRegistrationId"
-            },
-            {
-              "key": "Reason",
-              "value": "event"
+              "value": "$.absentees[*].id"
             },
             {
               "key": "AbsenceStartDate",
-              "value": "dateTime"
+              "value": "$.absentees[*].start_date"
             },
             {
               "key": "AbsenceEndDate",
-              "value": "dateTime"
+              "value": "$.absentees[*].end_date"
+            },
+            {
+              "key": "AbsenceTypeId",
+              "value": "$.absentees[*].type_id"
+            },
+            {
+              "key": "EmployeeId",
+              "value": "$.absentees[*].employee_id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fetch_shifts",
+      "steps": [
+        {
+          "type": "http",
+          "id": "step1",
+          "endpoint": "/shifts",
+          "method": "GET",
+          "outputs": [
+            {
+              "key": "ShiftId",
+              "value": "$.shifts[*].id"
+            }
+          ],
+          "collection": "Shift",
+          "operation": "insert",
+          "documents": [
+            {
+              "key": "ExternalShiftId",
+              "value": "$.shifts[*].external_id"
+            },
+            {
+              "key": "Description",
+              "value": "$.shifts[*].description"
+            },
+            {
+              "key": "Start",
+              "value": "$.shifts[*].start"
+            },
+            {
+              "key": "End",
+              "value": "$.shifts[*].end"
+            },
+            {
+              "key": "UserId",
+              "value": "$.shifts[*].user_id"
             }
           ]
         }

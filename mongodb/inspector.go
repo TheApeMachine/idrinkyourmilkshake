@@ -37,7 +37,7 @@ func NewMongoDBInspector() models.ToolType {
 						Description: "Optional: Number of documents to sample for schema inference (default: 10)",
 					},
 				},
-				Required: true,
+				Required: []string{},
 			},
 			Required: []string{"connection_string", "database"},
 		},
@@ -124,16 +124,19 @@ func (mi *MongoDBInspector) listCollections(ctx context.Context, db *mongo.Datab
 	}
 
 	if len(collections) == 0 {
-		return "No collections found in database", nil
+		return `{"error": "No collections found in database"}`, nil
 	}
 
-	result := fmt.Sprintf("Collections in database %s:\n", db.Name())
-	for _, coll := range collections {
-		result += fmt.Sprintf("- %s\n", coll)
+	result := map[string]interface{}{
+		"database": db.Name(),
+		"collections": collections,
 	}
-
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
 	log.Info("Successfully listed collections", "count", len(collections))
-	return result, nil
+	return string(jsonBytes), nil
 }
 
 func (mi *MongoDBInspector) getCollectionSchema(ctx context.Context, db *mongo.Database, collectionName string, sampleSize int) (string, error) {
@@ -149,7 +152,7 @@ func (mi *MongoDBInspector) getCollectionSchema(ctx context.Context, db *mongo.D
 	}
 
 	if count == 0 {
-		return fmt.Sprintf("Collection %s is empty", collectionName), nil
+		return fmt.Sprintf(`{"error": "Collection %s is empty"}`, collectionName), nil
 	}
 
 	// Sample documents to infer schema
@@ -171,22 +174,26 @@ func (mi *MongoDBInspector) getCollectionSchema(ctx context.Context, db *mongo.D
 	}
 
 	if len(documents) == 0 {
-		return fmt.Sprintf("No documents found in collection %s", collectionName), nil
+		return fmt.Sprintf(`{"error": "No documents found in collection %s"}`, collectionName), nil
 	}
 
 	// Infer schema from documents
 	schema := inferSchema(documents)
 
-	// Convert schema to JSON
-	schemaJSON, err := json.MarshalIndent(schema, "", "  ")
+	result := map[string]interface{}{
+		"collection": collectionName,
+		"document_count": count,
+		"sample_size": len(documents),
+		"schema": schema,
+	}
+	jsonBytes, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		log.Error("Failed to marshal schema to JSON", "error", err)
 		return "", fmt.Errorf("failed to marshal schema to JSON: %w", err)
 	}
 
 	log.Info("Successfully inferred schema", "collection", collectionName)
-	return fmt.Sprintf("Schema for collection %s (inferred from %d documents):\n%s",
-		collectionName, len(documents), string(schemaJSON)), nil
+	return string(jsonBytes), nil
 }
 
 // inferSchema analyzes documents to determine their structure

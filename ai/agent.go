@@ -18,6 +18,11 @@ type Agent struct {
 	params       *openai.ChatCompletionNewParams
 }
 
+// UpdateParams rebuilds the params using the current prompts
+func (a *Agent) UpdateParams() {
+	a.params = a.client.CreateCompletionParams(a.SystemPrompt, a.UserPrompt)
+}
+
 func NewAgent(systemPrompt, userPrompt string) *Agent {
 	// Initialize OpenAI client
 	client := oai.NewClient(os.Getenv("OPENAI_API_KEY"))

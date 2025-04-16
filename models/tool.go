@@ -17,7 +17,7 @@ type Tool struct {
 type Parameter struct {
 	Type       string     `json:"type" jsonschema:"description=The type of the parameter,required"`
 	Properties []Property `json:"properties" jsonschema:"description=The properties of the parameter,required"`
-	Required   bool       `json:"required" jsonschema:"description=Whether the parameter is required,required"`
+	Required   []string   `json:"required" jsonschema:"description=The required properties of the parameter,required"`
 }
 
 type Property struct {
@@ -31,7 +31,7 @@ func NewTool(toolType ToolType) ToolType {
 	return toolType
 }
 
-func NewParameter(t string, description string, properties []Property, required bool) *Parameter {
+func NewParameter(t string, description string, properties []Property, required []string) *Parameter {
 	return &Parameter{
 		Type:       t,
 		Properties: properties,

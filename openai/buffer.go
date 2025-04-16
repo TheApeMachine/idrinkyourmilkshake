@@ -52,8 +52,8 @@ func (buffer *Buffer) Truncate() *Buffer {
 
 	// Add first two messages
 	truncatedMessages = append(truncatedMessages, buffer.Messages[0], buffer.Messages[1])
-	totalTokens += buffer.estimateTokens(buffer.Messages[0].OfSystem.Content.OfString.String(), "system")
-	totalTokens += buffer.estimateTokens(buffer.Messages[1].OfUser.Content.OfString.String(), "user")
+	totalTokens += buffer.estimateTokens("system", buffer.Messages[0].OfSystem.Content.OfString.String())
+	totalTokens += buffer.estimateTokens("user", buffer.Messages[1].OfUser.Content.OfString.String())
 
 	// Start from the most recent message for the rest
 	for i := len(buffer.Messages) - 1; i >= 2; i-- {
@@ -61,13 +61,13 @@ func (buffer *Buffer) Truncate() *Buffer {
 
 		var messageTokens int
 		if msg.OfSystem != nil {
-			messageTokens = buffer.estimateTokens(msg.OfSystem.Content.OfString.String(), "system")
+			messageTokens = buffer.estimateTokens("system", msg.OfSystem.Content.OfString.String())
 		} else if msg.OfUser != nil {
-			messageTokens = buffer.estimateTokens(msg.OfUser.Content.OfString.String(), "user")
+			messageTokens = buffer.estimateTokens("user", msg.OfUser.Content.OfString.String())
 		} else if msg.OfAssistant != nil {
-			messageTokens = buffer.estimateTokens(msg.OfAssistant.Content.OfString.String(), "assistant")
+			messageTokens = buffer.estimateTokens("assistant", msg.OfAssistant.Content.OfString.String())
 		} else if msg.OfTool != nil {
-			messageTokens = buffer.estimateTokens(msg.OfTool.Content.OfString.String(), "tool")
+			messageTokens = buffer.estimateTokens("tool", msg.OfTool.Content.OfString.String())
 		}
 
 		if totalTokens+messageTokens <= maxTokens {

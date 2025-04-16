@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
+	"github.com/theapemachine/idrinkyourmilkshake/browser"
 	"github.com/theapemachine/idrinkyourmilkshake/models"
 	"github.com/theapemachine/idrinkyourmilkshake/mongodb"
 	"github.com/theapemachine/idrinkyourmilkshake/request"
@@ -35,10 +36,85 @@ func (integration *Integration) Execute() (err error) {
 	for _, job := range integration.config.Jobs {
 		log.Info("Executing job", "jobID", job.ID)
 
-		for _, step := range job.Steps {
+		for i, step := range job.Steps {
 			if err = integration.executeStep(step); err != nil {
 				log.Error("Error executing step", "stepID", step.ID, "error", err)
 				return err
+			}
+
+			// After the first HTTP extraction, run intelligent doc link discovery (no recursion)
+			if i == 0 && step.Type == "http" {
+				log.Info("Running intelligent API doc link discovery after first HTTP extraction")
+
+				// 1. List MongoDB collections
+				mongoTool := mongodb.NewMongoDBInspector()
+				collectionsResult, err := mongoTool.Execute(map[string]any{})
+				if err != nil {
+					log.Warn("Could not list MongoDB collections", "error", err)
+					continue
+				}
+				var collectionsObj map[string]any
+				_ = json.Unmarshal([]byte(collectionsResult), &collectionsObj)
+				collections := []string{}
+				if arr, ok := collectionsObj["collections"].([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							collections = append(collections, strings.ToLower(s))
+						}
+					}
+				}
+
+				// 2. Discover links from current docs page
+				linkTool := browser.NewBrowserLinkDiscoverer()
+				linksResult, err := linkTool.Execute(map[string]any{})
+				if err != nil {
+					log.Warn("Could not discover links", "error", err)
+					continue
+				}
+				var linksObj map[string]any
+				_ = json.Unmarshal([]byte(linksResult), &linksObj)
+				links := []map[string]string{}
+				if arr, ok := linksObj["links"].([]interface{}); ok {
+					for _, v := range arr {
+						if m, ok := v.(map[string]interface{}); ok {
+							url, _ := m["url"].(string)
+							text, _ := m["text"].(string)
+							links = append(links, map[string]string{"url": url, "text": text})
+						}
+					}
+				}
+
+				// 3. Match links to collections: if link text or url contains collection name
+				relevantLinks := []map[string]string{}
+				for _, link := range links {
+					for _, coll := range collections {
+						if strings.Contains(strings.ToLower(link["url"]), coll) || strings.Contains(strings.ToLower(link["text"]), coll) {
+							relevantLinks = append(relevantLinks, link)
+							break
+						}
+					}
+				}
+
+				// 4. For each relevant link, navigate/click and extract (no recursion)
+				for _, link := range relevantLinks {
+					log.Info("Following relevant API doc link", "link", link)
+					// Prefer navigation if absolute, click if relative
+					if strings.HasPrefix(link["url"], "http") {
+						navTool := browser.NewBrowserNavigator()
+						_, _ = navTool.Execute(map[string]any{"url": link["url"]})
+					} else {
+						clickTool := browser.NewBrowserClicker()
+						// Try to click by href or by text
+						if link["url"] != "" {
+							_, _ = clickTool.Execute(map[string]any{"selector": fmt.Sprintf("a[href='%s']", link["url"])})
+						} else if link["text"] != "" {
+							_, _ = clickTool.Execute(map[string]any{"selector": fmt.Sprintf("a:contains('%s')", link["text"])})
+						}
+					}
+					// Extract content after navigation/click
+					extractTool := browser.NewBrowserExtractor()
+					_, _ = extractTool.Execute(map[string]any{})
+				}
 			}
 		}
 	}

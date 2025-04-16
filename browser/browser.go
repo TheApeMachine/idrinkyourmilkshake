@@ -3,6 +3,8 @@ package browser
 import (
 	"fmt"
 	"time"
+	"encoding/json"
+	"strings"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/charmbracelet/log"
@@ -41,7 +43,7 @@ func NewBrowserExtractor() models.ToolType {
 		ToolParameters: models.Parameter{
 			Type:       "object",
 			Properties: []models.Property{},
-			Required:   true,
+			Required:   []string{},
 		},
 		Required: []string{},
 	}
@@ -115,7 +117,7 @@ func NewBrowserNavigator() models.ToolType {
 					Description: "The URL to navigate to",
 				},
 			},
-			Required: true,
+			Required: []string{"url"},
 		},
 		Required: []string{"url"},
 	}
@@ -166,6 +168,98 @@ type BrowserClicker struct {
 	Required        []string         `json:"required" jsonschema:"description=The required parameters of the tool,required"`
 }
 
+// BrowserLinkDiscoverer extracts and ranks links from the current page for API doc discovery
+// Returns a JSON array of links: {"links": [{"url": ..., "text": ...}, ...]}
+type BrowserLinkDiscoverer struct {
+	ToolName        string           `json:"name" jsonschema:"description=The name of the tool,required"`
+	ToolDescription string           `json:"description" jsonschema:"description=The description of the tool,required"`
+	ToolParameters  models.Parameter `json:"parameters" jsonschema:"description=The parameters of the tool,required"`
+	Required        []string         `json:"required" jsonschema:"description=The required parameters of the tool,required"`
+}
+
+func NewBrowserLinkDiscoverer() models.ToolType {
+	return &BrowserLinkDiscoverer{
+		ToolName:        "discover_links",
+		ToolDescription: "Discovers and ranks relevant links from the current page for API documentation crawling",
+		ToolParameters: models.Parameter{
+			Type:       "object",
+			Properties: []models.Property{},
+			Required:   []string{},
+		},
+		Required: []string{},
+	}
+}
+
+func (bld *BrowserLinkDiscoverer) Name() string {
+	return bld.ToolName
+}
+
+func (bld *BrowserLinkDiscoverer) Description() string {
+	return bld.ToolDescription
+}
+
+func (bld *BrowserLinkDiscoverer) Execute(args map[string]any) (string, error) {
+	links, err := page.Elements("a")
+	if err != nil {
+		return "", err
+	}
+
+type linkInfo struct {
+	URL  string `json:"url"`
+	Text string `json:"text"`
+}
+	var results []linkInfo
+	seen := make(map[string]struct{})
+	for _, link := range links {
+		href, _ := link.Attribute("href")
+		text := link.MustText()
+		if href == nil || *href == "" {
+			continue
+		}
+		// Only keep absolute or root-relative links
+		if !isLikelyDocLink(*href, text) {
+			continue
+		}
+		if _, exists := seen[*href]; exists {
+			continue
+		}
+		seen[*href] = struct{}{}
+		results = append(results, linkInfo{URL: *href, Text: text})
+	}
+	jsonBytes, err := json.Marshal(map[string]interface{}{"links": results})
+	if err != nil {
+		return "", err
+	}
+	return string(jsonBytes), nil
+}
+
+// Heuristic: prioritize links that look like API docs/endpoints
+func isLikelyDocLink(href, text string) bool {
+	if len(href) < 2 {
+		return false
+	}
+	// Heuristic: endpoint, api, reference, resource, operation, method, etc.
+	patterns := []string{"endpoint", "api", "reference", "resource", "operation", "method", "/docs/", "/api/", "/reference/", "/rest/"}
+	for _, pat := range patterns {
+		if strings.Contains(strings.ToLower(href), pat) || strings.Contains(strings.ToLower(text), pat) {
+			return true
+		}
+	}
+	// Looks like an HTTP method or endpoint
+	if strings.HasPrefix(text, "GET ") || strings.HasPrefix(text, "POST ") || strings.HasPrefix(text, "PUT ") || strings.HasPrefix(text, "DELETE ") {
+		return true
+	}
+	return false
+}
+
+func (bld *BrowserLinkDiscoverer) Schema() any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+		"required":   []string{},
+	}
+}
+
 func NewBrowserClicker() models.ToolType {
 	return &BrowserClicker{
 		ToolName:        "browser_click",
@@ -176,10 +270,10 @@ func NewBrowserClicker() models.ToolType {
 				{
 					Name:        "selector",
 					Type:        "string",
-					Description: "The selector of the element to click",
+					Description: "The CSS selector of the element to click",
 				},
 			},
-			Required: true,
+			Required: []string{"selector"},
 		},
 		Required: []string{"selector"},
 	}
@@ -253,7 +347,7 @@ func NewBrowserJavaScriptExecutor() models.ToolType {
 					Description: "The JavaScript code to execute, you must supply a function that returns a string, no exceptions",
 				},
 			},
-			Required: true,
+			Required: []string{"script"},
 		},
 		Required: []string{"script"},
 	}

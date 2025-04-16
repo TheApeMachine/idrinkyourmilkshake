@@ -40,7 +40,7 @@ func NewHTTPRequest() models.ToolType {
 					Description: "The headers of the request",
 				},
 			},
-			Required: true,
+			Required: []string{"url"},
 		},
 		Required: []string{"url"},
 	}

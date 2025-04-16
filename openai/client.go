@@ -99,14 +99,15 @@ func (c *Client) ExecuteWithTools(params *openai.ChatCompletionNewParams, maxIte
 
 		toolCalls := completion.Choices[0].Message.ToolCalls
 
-		if len(toolCalls) == 0 {
-			// Validate JSON response
-			var result map[string]interface{}
-			if err := json.Unmarshal([]byte(completion.Choices[0].Message.Content), &result); err != nil {
-				return "", fmt.Errorf("invalid JSON response: %w", err)
+			if len(toolCalls) == 0 {
+				// Attempt to validate JSON response; if invalid, log warning and return raw content
+				var result map[string]interface{}
+				if err := json.Unmarshal([]byte(completion.Choices[0].Message.Content), &result); err != nil {
+					log.Warn("Invalid JSON response, returning raw content", "error", err)
+					return completion.Choices[0].Message.Content, nil
+				}
+				return completion.Choices[0].Message.Content, nil
 			}
-			return completion.Choices[0].Message.Content, nil
-		}
 
 		// Add assistant message
 		message := openai.ChatCompletionMessageParamUnion{
@@ -132,12 +133,13 @@ func (c *Client) ExecuteWithTools(params *openai.ChatCompletionNewParams, maxIte
 
 // ProcessToolCall handles a single tool call
 func (c *Client) ProcessToolCall(toolCall openai.ChatCompletionMessageToolCall, params *openai.ChatCompletionNewParams) error {
-	// Parse the arguments
-	var args map[string]any
-	if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
-		log.Error("Error parsing arguments", "error", err)
-		return fmt.Errorf("error parsing arguments: %w", err)
-	}
+   // Parse the arguments
+   var args map[string]any
+   if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+       log.Warn("Error parsing tool call arguments, skipping tool call", "error", err, "arguments", toolCall.Function.Arguments)
+       // Skip this tool call and continue
+       return nil
+   }
 
 	tool, exists := c.tools[toolCall.Function.Name]
 	if !exists {

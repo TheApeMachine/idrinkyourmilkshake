@@ -1,11 +1,12 @@
 package ai
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
+   "context"
+   "encoding/json"
+   "fmt"
+   "github.com/charmbracelet/log"
 
-	"github.com/theapemachine/idrinkyourmilkshake/models"
+   "github.com/theapemachine/idrinkyourmilkshake/models"
 )
 
 // Pipeline processes the API documentation and builds the configuration
@@ -29,10 +30,11 @@ func (p *Pipeline) Execute(ctx context.Context, apiConfig *models.APIConfig) (*m
 		return nil, fmt.Errorf("failed to execute agent: %w", err)
 	}
 
-	// Parse the agent's response into our APIConfig structure
-	if err := json.Unmarshal([]byte(result), apiConfig); err != nil {
-		return nil, fmt.Errorf("failed to parse agent response: %w", err)
-	}
+   // Parse the agent's response into our APIConfig structure
+   if err := json.Unmarshal([]byte(result), apiConfig); err != nil {
+       log.Warn("Failed to parse agent response as JSON, returning existing config", "error", err, "response", result)
+       return apiConfig, nil
+   }
 
 	return apiConfig, nil
 }
