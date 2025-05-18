@@ -75,6 +75,16 @@ Run the application:
 go run main.go
 ```
 
+You can also use the built-in CLI commands:
+
+```bash
+# Generate a configuration by analyzing API docs
+idrinkyourmilkshake integrate -d https://example.com/api/docs -o integration-config.json
+
+# Execute the integration using the generated configuration
+idrinkyourmilkshake run -c integration-config.json
+```
+
 By default, the application will process the Dyflexis API documentation at [dyflexis](https://developer.dyflexis.com/v3).
 
 To analyze a different API, modify the user prompt in `main.go`.
